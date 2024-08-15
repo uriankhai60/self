@@ -187,10 +187,10 @@ def log_validation(
         return image_logs
     
 
-def import_model_class_from_model_name_or_path(pretrained_model_name_or_path:str, revision:str):
+def import_model_class_from_model_name_or_path(pretrained_model_name_or_path: str, revision: str):
     text_encoder_config = PretrainedConfig.from_pretrained(
         pretrained_model_name_or_path,
-        subfolder = "text_encoder",
+        subfolder="text_encoder",
         revision=revision,
     )
     model_class = text_encoder_config.architectures[0]
@@ -219,7 +219,7 @@ def save_model_card(repo_id: str, image_logs=None, base_model=str, repo_folder=N
             img_str += f"prompt: {validation_prompt}\n"
             images = [validation_image] + images
             image_grid(images, 1, len(images)).save(os.path.join(repo_folder, f"images_{i}.png"))
-            img_str += f"![images{i}](./images_{i}.png)\n"
+            img_str += f"![images_{i})](./images_{i}.png)\n"
 
     model_description = f"""
 # controlnet-{repo_id}
@@ -246,7 +246,7 @@ These are controlnet weights trained on {base_model} with new type of conditioni
     ]
     model_card = populate_model_card(model_card, tags=tags)
 
-    model_card.save(os.path.join(repo_folder, "READMD.md"))
+    model_card.save(os.path.join(repo_folder, "README.md"))
 
 
 def parse_args(input_args=None):
@@ -256,7 +256,7 @@ def parse_args(input_args=None):
         type=str,
         default=None,
         required=True,
-        help="Path to pretrained model or model identifier from huggingface.co/models",
+        help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
         "--controlnet_model_name_or_path",
@@ -302,7 +302,7 @@ def parse_args(input_args=None):
         type=int,
         default=512,
         help=(
-            "The resolution for input images, all the images in the train/validation datset will be resized to this"
+            "The resolution for input images, all the images in the train/validation dataset will be resized to this"
             " resolution"
         ),
     )
@@ -325,8 +325,8 @@ def parse_args(input_args=None):
             "In the case that the checkpoint is better than the final trained model, the checkpoint can also be used for inference."
             "Using a checkpoint for inference requires separate loading of the original pipeline and the individual checkpointed model components."
             "See https://huggingface.co/docs/diffusers/main/en/training/dreambooth#performing-inference-using-a-saved-checkpoint for step by step"
-            "instructions."            
-        )
+            "instructions."
+        ),
     )
     parser.add_argument(
         "--checkpoints_total_limit",
@@ -358,13 +358,13 @@ def parse_args(input_args=None):
         "--learning_rate",
         type=float,
         default=5e-6,
-        help="Initial learning rate (after the potential warm period) to use.",
+        help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument(
-        "--scaler_lr",
+        "--scale_lr",
         action="store_true",
         default=False,
-        help="scale the learning rate by the number of GPUs, gradient accumulation steps, and batch size.",
+        help="Scale the learning rate by the number of GPUs, gradient accumulation steps, and batch size.",
     )
     parser.add_argument(
         "--lr_scheduler",
@@ -395,7 +395,7 @@ def parse_args(input_args=None):
         help=(
             "Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
         ),
-    ) # CHECK
+    ) # 체크할 것
     parser.add_argument("--adam_beta1", type=float, default=0.9, help="The beta1 parameter for the Adam optimizer.")
     parser.add_argument("--adam_beta2", type=float, default=0.999, help="The beta2 parameter for the Adam optimizer.")
     parser.add_argument("--adam_weight_decay", type=float, default=1e-2, help="Weight decay to use.")
@@ -407,7 +407,7 @@ def parse_args(input_args=None):
         "--hub_model_id",
         type=str,
         default=None,
-        help="The name of the repository to keep in sync with the local `output_dir.`.",
+        help="The name of the repository to keep in sync with the local `output_dir`.",
     )
     parser.add_argument(
         "--logging_dir",
@@ -509,10 +509,10 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--proportation_empty_prompts",
+        "--proportion_empty_prompts",
         type=float,
         default=0,
-        help="Proportation of image prompts to be replaced with empty strings. Defaults to 0 (no prompt replacement).",
+        help="Proportion of image prompts to be replaced with empty strings. Defaults to 0 (no prompt replacement).",
     )
     parser.add_argument(
         "--validation_prompt",
@@ -706,7 +706,7 @@ def make_train_dataset(args, tokenizer, accelerator):
         examples["pixel_values"] = images
         examples["conditioning_pixel_values"] = conditioning_images
         examples["input_ids"] = tokenize_captions(examples)
-        
+
         return examples
     
     with accelerator.main_process_first():
@@ -714,7 +714,7 @@ def make_train_dataset(args, tokenizer, accelerator):
             dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
         # Set the training transforms
         train_dataset = dataset["train"].with_transform(preprocess_train)
-    
+
     return train_dataset
 
 
@@ -730,7 +730,7 @@ def collate_fn(examples):
     return {
         "pixel_values": pixel_values,
         "conditioning_pixel_values": conditioning_pixel_values,
-        "input_idx": input_ids
+        "input_ids": input_ids,
     }
 
 
@@ -762,7 +762,130 @@ def main(args):
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO,
     )
+    logger.info(accelerator.state, main_process_only=False)
+    if accelerator.is_local_main_process:
+        transformers.utils.logging.set_verbosity_warning()
+        diffusers.utils.logging.set_verbosity_info()
+    else:
+        transformers.utils.logging.set_verbosity_error()
+        diffusers.utils.logging.set_verbosity_error()
     
+    # if passed along, set the training seed now.
+    if args.seed is not None:
+        set_seed(args.seed)
+    
+    # Handle the repository creation
+    if accelerator.is_main_process:
+        if args.output_dir is not None:
+            os.makedirs(args.output_dir, exist_ok=True)
+        
+        if args.push_to_hub:
+            repo_id = create_repo(
+                repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
+            ).repo_id
+    
+    # Load thd tokenizer
+    if args.tokenizer_name:
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, prevision=args.version, use_fast=False)
+    elif args.pretrained_model_name_or_path:
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="tokenizer",
+            revision=args.revision,
+            use_fast=False,
+        )
+    
+    # import correct text encoder class
+    text_encoder_cls = import_model_class_from_model_name_or_path(args.pretrained_model_name_or_path, args.revision)
+
+    # Load scheduler and models
+    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    text_encoder = text_encoder_cls.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant=args.variant
+    )
+    vae = AutoencoderKL.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
+    )
+    unet = UNet2DConditionModel.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="unet", revision=args.version, variant=args.variant
+    )
+
+    if args.controlnet_model_name_or_path:
+        logger.info("Loading existing controlnet weights")
+        controlnet = ControlNetModel.from_pretrained(args.controlnet_model_name_or_path)
+    else: # 컨트롤넷 경로를 지정하지 않을경우 unet에서 카피함
+        logger.info("Initializing controlnet weights from unet")
+        controlnet = ControlNetModel.from_unet(unet)
+    
+    # Taken from [Sayak Paul's Diffusers PR #6511](https://github.com/huggingface/diffusers/pull/6511/files)
+    def unwrap_model(model):
+        model = accelerator.unwrap_model(model)
+        model = model._orig_mod if is_compiled_module(model) else model
+        return model
+    
+    # `accelerate` 0.16.0 will have better support for customized saving
+    if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
+        # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
+        def save_model_hook(models, weights, output_dir):
+            if accelerator.is_main_process:
+                i = len(weights) - 1
+
+                while len(weights) > 0:
+                    weights.pop()
+                    model = models[i]
+
+                    sub_dir = "controlnet"
+                    model.save_pretrained(os.path.join(output_dir, sub_dir))
+
+                    i -= 1
+        
+        def load_model_hook(models, input_dir):
+            while len(models) > 0:
+                # pop models so that they are not loaded again
+                model = models.pop()
+
+                # load diffusers style into model
+                load_model = ControlNetModel.from_pretrained(input_dir, subfolder="controlnet")
+                model.register_to_config(**load_model.config)
+
+                model.load_state_dict(load_model.state_dict())
+                del load_model
+        
+        accelerator.register_save_state_pre_hook(save_model_hook)
+        accelerator.register_load_state_pre_hook(load_model_hook)
+    
+    vae.requires_grad_(False)
+    unet.requires_grad_(False)
+    text_encoder.requires_grad_(False)
+    controlnet.train() # 컨트롤넷 unfreeze
+
+    if args.enable_xformers_memory_efficient_attention: # xformers를 사용한 경우
+        if is_xformers_available():
+            import xformers
+
+            xformers_version = version.parse(xformers.__version__)
+            if xformers_version == version.parse("0.0.16"): # 특정 버전에서는 warn
+                logger.warning(
+                    "xFormers 0.0.16 cannot be used for training in some GPUs. I you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
+                )
+            unet.enable_xformers_memory_efficient_attention() # 플래그 on
+            controlnet.enable_xformers_memory_efficient_attention() # 플래그 on
+        else:
+            raise ValueError("xformers is not available. Make sure it is installed correctly")
+
+    if args.gradient_checkpointing:
+        controlnet.enable_gradient_checkpointing()
+
+    # Check that all trainable models are in full precision # 모든 모델이 full precision으로 트레이닝 되는지 확인
+    low_precision_error_string = (
+        " Please make sure to always have all model weights in full float32 precision when starting training - even if"
+        " doing mixed precision training, copy of the weights should still be float32."
+    )
+
+
+
+
+
 
 if __name__ == "__main__":
     args = parse_args()
