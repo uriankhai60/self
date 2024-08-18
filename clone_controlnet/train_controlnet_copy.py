@@ -570,19 +570,19 @@ def parse_args(input_args=None):
 
     if args.dataset_name is None and args.train_data_dir is None:
         raise ValueError("Specify either `--dataset_name` or `--train_data_dir`")
-    
+
     if args.dataset_name is not None and args.train_data_dir is not None:
         raise ValueError("Specify only one of `--dataset_name` or `--train_data_dir`")
-    
+
     if args.proportion_empty_prompts < 0 or args.proportion_empty_prompts > 1:
         raise ValueError("`--proportion_empty_prompts` must be in the range [0, 1].")
-    
+
     if args.validation_prompt is not None and args.validation_image is None:
         raise ValueError("`--validation_image` must be set if `--validation_prompt` is set")
-    
+
     if args.validation_prompt is None and args.validation_image is not None:
         raise ValueError("`--validation_prompt` must be set if `--validation_image` is set")
-    
+
     if (
         args.validation_image is not None 
         and args.validation_prompt is not None # 둘다 주어진 상황에서
@@ -594,7 +594,7 @@ def parse_args(input_args=None):
             "Must provide either 1 `--validation_image`, 1 `--validation_prompt`,"
             " or the same number of `--validation_prompt`s and `--validation_image`s"
         ) # (1이미지, 1프롬프트) (1이미지, n프롬프트) (n이미지, n프롬프트)가 아니면 발생
-    
+
     if args.resolution % 8 !=0:
         raise ValueError(
             "`--resolution` must be divisible by 8 for consistently sized encoded images between the VAE and the controlnet encoder."
@@ -624,7 +624,7 @@ def make_train_dataset(args, tokenizer, accelerator):
             )
         # See more about loading custom images at
         # https://huggingface.co/docs/datasets/v2.0.0/en/dataset_script
-    
+
     # Preprocessing the datasets.
     # We need to tokenize inputs and targets.
     column_names = dataset["train"].column_names
@@ -637,9 +637,9 @@ def make_train_dataset(args, tokenizer, accelerator):
         image_column = args.image_column
         if image_column not in column_names:
             raise ValueError(
-                f"`--image_column` value `{args.image_column}` not found in dataset columns. Dataset columns are: {'. '.join(column_names)}"
+                f"`--image_column` value '{args.image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
             )
-    
+
     if args.caption_column is None:
         caption_column = column_names[1]
         logger.info(f"caption column defaulting to {caption_column}")
