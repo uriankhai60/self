@@ -644,12 +644,12 @@ def make_train_dataset(args, tokenizer, accelerator):
         caption_column = column_names[1]
         logger.info(f"caption column defaulting to {caption_column}")
     else:
-        caption_column = args.caption
+        caption_column = args.caption_column
         if caption_column not in column_names:
             raise ValueError(
                 f"`--caption_column` value '{args.caption_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
             )
-    
+
     if args.conditioning_image_column is None:
         conditioning_image_column = column_names[2]
         logger.info(f"conditioning image column defaulting to {conditioning_image_column}")
@@ -659,7 +659,7 @@ def make_train_dataset(args, tokenizer, accelerator):
             raise ValueError(
                 f"`--conditioning_image_column` value '{args.conditioning_image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
             )
-    
+
     def tokenize_captions(examples, is_train=True):
         captions = []
         for caption in examples[caption_column]:
@@ -708,7 +708,7 @@ def make_train_dataset(args, tokenizer, accelerator):
         examples["input_ids"] = tokenize_captions(examples)
 
         return examples
-    
+
     with accelerator.main_process_first():
         if args.max_train_samples is not None:
             dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
@@ -738,11 +738,11 @@ def main(args):
     if args.report_to == "wandb" and args.hub_token is not None:
         raise ValueError(
             "You cannot use both --report_to=wandb and --hub_token due to a security risk of exposing your token."
-            " Please use `huggingface-cli login` to autenticate with the Hub."
+            " Please use `huggingface-cli login` to authenticate with the Hub."
         )
-    
+
     logging_dir = Path(args.output_dir, args.logging_dir) # os.path.join
-    
+
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
 
     accelerator = Accelerator(
@@ -755,7 +755,7 @@ def main(args):
     # Disable AMP for MPS.
     if torch.backends.mps.is_available():
         accelerator.native_amp = False
-    
+
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -769,24 +769,24 @@ def main(args):
     else:
         transformers.utils.logging.set_verbosity_error()
         diffusers.utils.logging.set_verbosity_error()
-    
-    # if passed along, set the training seed now.
+
+    # If passed along, set the training seed now.
     if args.seed is not None:
         set_seed(args.seed)
-    
+
     # Handle the repository creation
     if accelerator.is_main_process:
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
-        
+
         if args.push_to_hub:
             repo_id = create_repo(
                 repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
             ).repo_id
-    
-    # Load thd tokenizer
+
+    # Load the tokenizer
     if args.tokenizer_name:
-        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, prevision=args.version, use_fast=False)
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, revision=args.revision, use_fast=False)
     elif args.pretrained_model_name_or_path:
         tokenizer = AutoTokenizer.from_pretrained(
             args.pretrained_model_name_or_path,
@@ -794,7 +794,7 @@ def main(args):
             revision=args.revision,
             use_fast=False,
         )
-    
+
     # import correct text encoder class
     text_encoder_cls = import_model_class_from_model_name_or_path(args.pretrained_model_name_or_path, args.revision)
 
@@ -807,7 +807,7 @@ def main(args):
         args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
     )
     unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.version, variant=args.variant
+        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant
     )
 
     if args.controlnet_model_name_or_path:
@@ -816,13 +816,13 @@ def main(args):
     else: # 컨트롤넷 경로를 지정하지 않을경우 unet에서 카피함
         logger.info("Initializing controlnet weights from unet")
         controlnet = ControlNetModel.from_unet(unet)
-    
+
     # Taken from [Sayak Paul's Diffusers PR #6511](https://github.com/huggingface/diffusers/pull/6511/files)
     def unwrap_model(model):
         model = accelerator.unwrap_model(model)
         model = model._orig_mod if is_compiled_module(model) else model
         return model
-    
+
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
         # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
@@ -838,7 +838,7 @@ def main(args):
                     model.save_pretrained(os.path.join(output_dir, sub_dir))
 
                     i -= 1
-        
+
         def load_model_hook(models, input_dir):
             while len(models) > 0:
                 # pop models so that they are not loaded again
@@ -850,10 +850,10 @@ def main(args):
 
                 model.load_state_dict(load_model.state_dict())
                 del load_model
-        
+
         accelerator.register_save_state_pre_hook(save_model_hook)
         accelerator.register_load_state_pre_hook(load_model_hook)
-    
+
     vae.requires_grad_(False)
     unet.requires_grad_(False)
     text_encoder.requires_grad_(False)
@@ -882,7 +882,159 @@ def main(args):
         " doing mixed precision training, copy of the weights should still be float32."
     )
 
+    if unwrap_model(controlnet).dtype != torch.float32:
+        raise ValueError(
+            f"Controlnet loaded as datatype {unwrap_model(controlnet).dtype}. {low_precision_error_string}"
+        )
 
+    # Enable TF32 for faster training on Ampere GPUs,
+    # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
+    if args.allow_tf32:
+        torch.backends.cuda.matmul.allow_tf32 = True
+
+    if args.scale_lr:
+        args.learning_rate = (
+            args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
+        )
+
+    # Use 8-bit Adam for lower memory usage or to fine-tune the model in 16GB GPUs
+    if args.use_8bit_adam:
+        try:
+            import bitsandbytes as bnb
+        except ImportError:
+            raise ImportError(
+                "To use 8-bit Adam, please install the bitsandbytes library: `pip install bitsandbytes`."
+            )
+
+        optimizer_class = bnb.optim.AdamW8bit
+    else:
+        optimizer_class = torch.optim.AdamW
+
+    # Optimizer creation
+    params_to_optimize = controlnet.parameters()
+    optimizer = optimizer_class(
+        params_to_optimize,
+        lr=args.learning_rate,
+        betas=(args.adam_beta1, args.adam_beta2),
+        weight_decay=args.adam_weight_decay,
+        eps=args.adam_epsilon,
+    )
+
+    train_dataset = make_train_dataset(args, tokenizer, accelerator)
+
+    train_dataloader = torch.utils.data.DataLoader(
+        train_dataset,
+        shuffle=True,
+        collate_fn=collate_fn,
+        batch_size=args.train_batch_size,
+        num_workers=args.dataloader_num_workers,
+    )
+
+    # Scheduler and math around the number of training steps.
+    overrode_max_train_steps = False
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    if args.max_train_steps is None:
+        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+        overrode_max_train_steps = True
+
+    lr_scheduler = get_scheduler(
+        args.lr_scheduler,
+        optimizer=optimizer,
+        num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+        num_training_steps=args.max_train_steps * accelerator.num_processes,
+        num_cycles=args.lr_num_cycles,
+        power=args.lr_power,
+    )
+
+    # Prepare everything with our `accelerator`.
+    controlnet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        controlnet, optimizer, train_dataloader, lr_scheduler
+    )
+
+    # For mixed precision training we cast the text_encoder and vae weights to half-precision
+    # as these models are only used for inference, keeping weights in full precision is not required.
+    weight_dtype = torch.float32
+    if accelerator.mixed_precision == "fp16":
+        weight_dtype = torch.float16
+    elif accelerator.mixed_precision == "bf16":
+        weight_dtype = torch.bfloat16
+
+    # Move vae, unet and text_encoder to device and cast to weight_dtype
+    vae.to(accelerator.device, dtype=weight_dtype)
+    unet.to(accelerator.device, dtype=weight_dtype)
+    text_encoder.to(accelerator.device, dtype=weight_dtype)
+
+    # We need to recalculate our total training steps as the size of the training dataloader may have changed.
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    if overrode_max_train_steps:
+        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+    # Afterwards we recalculate our number of training epochs
+    args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+
+    # We need to initialize the trackers we use, and also store our configuration.
+    # The trackers initializes automatically on the main process.
+    if accelerator.is_main_process:
+        tracker_config = dict(vars(args))
+
+        # tensorboard cannot handle list types for config
+        tracker_config.pop("validation_prompt")
+        tracker_config.pop("validation_image")
+
+        accelerator.init_trackers(args.tracker_project_name, config=tracker_config)
+
+    # Train!
+    total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
+
+    logger.info("***** Running training *****")
+    logger.info(f"  Num examples = {len(train_dataset)}")
+    logger.info(f"  Num batches each epoch = {len(train_dataloader)}")
+    logger.info(f"  Num Epochs = {args.num_train_epochs}")
+    logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
+    logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
+    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
+    logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    global_step = 0
+    first_epoch = 0
+
+    # Potentially load in the weights and states from a previous save
+    if args.resume_from_checkpoint:
+        if args.resume_from_checkpoint != "latest":
+            path = os.path.basename(args.resume_from_checkpoint)
+        else:
+            # Get the most recent checkpoint
+            dirs = os.listdir(args.output_dir)
+            dirs = [d for d in dirs if d.startswith("checkpoint")]
+            dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
+            path = dirs[-1] if len(dirs) > 0 else None
+
+        if path is None:
+            accelerator.print(
+                f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
+            )
+            args.resume_from_checkpoint = None
+            initial_global_step = 0
+        else:
+            accelerator.print(f"Resuming from checkpoint {path}")
+            accelerator.load_state(os.path.join(args.output_dir, path))
+            global_step = int(path.split("-")[1])
+
+            initial_global_step = global_step
+            first_epoch = global_step // num_update_steps_per_epoch
+    else:
+        initial_global_step = 0
+
+    progress_bar = tqdm(
+        range(0, args.max_train_steps),
+        initial=initial_global_step,
+        desc="Steps",
+        # Only show the progress bar once on each machine.
+        disable=not accelerator.is_local_main_process,
+    )
+
+    image_logs = None
+    for epoch in range(first_epoch, args.num_train_epochs):
+        ...
+    
 
 
 
