@@ -69,10 +69,10 @@ def image_grid(imgs, rows, cols):
     assert len(imgs) == rows * cols
 
     w, h = imgs[0].size
-    grid  = Image.new("RGB", size=(cols * w, rows * h))
+    grid = Image.new("RGB", size=(cols * w, rows * h))
 
     for i, img in enumerate(imgs):
-        grid.paste(img, box = (i % cols * w, i // cols * h))
+        grid.paste(img, box=(i % cols * w, i // cols * h))
     return grid
 
 
@@ -1060,7 +1060,7 @@ def main(args):
                     timesteps,
                     encoder_hidden_states=encoder_hidden_states,
                     controlnet_cond=controlnet_image,
-                    return_dict=False
+                    return_dict=False,
                 )
 
                 # Predict the noise residual
@@ -1069,10 +1069,10 @@ def main(args):
                     timesteps,
                     encoder_hidden_states=encoder_hidden_states,
                     down_block_additional_residuals=[
-                        sample.to(dype=weight_dtype) for sample in down_block_res_samples
+                        sample.to(dtype=weight_dtype) for sample in down_block_res_samples
                     ],
-                    mid_block_additional_residuals=mid_block_res_sample.to(dtype=weight_dtype),
-                    return_dict =False,
+                    mid_block_additional_residual=mid_block_res_sample.to(dtype=weight_dtype),
+                    return_dict=False,
                 )[0]
 
                 # Get the target for loss depending on the prediction type
@@ -1176,7 +1176,7 @@ def main(args):
                 repo_id=repo_id,
                 folder_path=args.output_dir,
                 commit_message="End of training",
-                ignore_patterns=["step_*", "epoch_*"]
+                ignore_patterns=["step_*", "epoch_*"],
             )
     
     accelerator.end_training()
